@@ -67,6 +67,20 @@ Then open:
 - **Control Panel** → [http://localhost:3000](http://localhost:3000)
 - **OBS Overlay** → `http://localhost:3000/overlay.html` (add as Browser Source)
 
+### Linux launcher
+
+`launch.sh` is a portable, distro-agnostic launcher for Debian/Ubuntu, Fedora, and Arch (and most other glibc distros). Keep it in the repo root.
+
+```bash
+chmod +x launch.sh
+./launch.sh            # install Node + deps if missing, then start
+./launch.sh setup      # install only
+./launch.sh update     # git pull this clone, reinstall deps, start
+./launch.sh start      # start only
+```
+
+It uses a system Node.js v18+ if you already have one. Otherwise it downloads an official portable Node runtime into `./runtime/` (no root required). `npm install` is skipped when dependencies are already present.
+
 ### From Release (no Node.js needed)
 
 1. Download the latest release ZIP
