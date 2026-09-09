@@ -179,6 +179,13 @@ Saved in `localStorage` as `webcamQuality`. Implemented in `public/webcam-qualit
 
 ---
 
+## Docs
+
+- [`docs/layout.md`](docs/layout.md) — control panel grid vs transparent OBS overlay
+- [`docs/theme.md`](docs/theme.md) — control-panel CSS variables (recolor here)
+
+---
+
 ## Ports
 
 | Port | Protocol | Purpose |
