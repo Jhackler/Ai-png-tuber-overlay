@@ -1,12 +1,18 @@
 # ⚔️ AS Adventurer
 
-**A free, open-source reactive overlay for streamers.** AS Adventurer bridges the gap between PNGtubing and VTube Studio — giving you expression-reactive characters without the cost or complexity of a full Live2D setup.
+**A free, open-source reactive overlay for streamers.** Linux-first hard fork of Angel's Sword Studios' overlay — expression-reactive characters without a full Live2D stack.
 
-It's not meant to replace either. If you want a quick, lightweight reactive avatar that responds to your face and voice, this is for you. If you need full Live2D rigging, use VTube Studio. If you just want a static PNG that bounces, use a PNGtuber tool. AS Adventurer sits in the middle — **animated expression swaps driven by real facial tracking**.
+Repo: [Jhackler/Ai-png-tuber-overlay](https://github.com/Jhackler/Ai-png-tuber-overlay)
 
-It also works great for **Discord collab reactives** — drop your character sprites in a folder and go.
+It's not meant to replace VTube Studio or a bounce-PNG tool. If you want a lightweight reactive avatar driven by face + voice, this is the middle path.
 
-> Built by [Angel's Sword Studios](https://github.com/angelssword). Designed for creators on a budget.
+Works for **Discord collab reactives** too — drop sprites in a folder and go.
+
+Companion asset pipeline (separate repo, port **3001**): [Jhackler/png-tube-creator](https://github.com/Jhackler/png-tube-creator). This overlay is **port 3000**.
+
+This fork's focus is **Linux** (`launch.sh`) and extras like webcam capture quality. Windows EXEs/bats from upstream still exist; they are not the supported path.
+
+> Built from [Angel's Sword Studios](https://github.com/angelssword) original. Forked for Linux + personal use.
 
 ---
 
@@ -42,25 +48,19 @@ On top of expressions, you can trigger **emotes** from the control panel — one
 - **Crossfade / blur-pop transitions** — configurable swap animation between expression states
 - **OBS-native** — transparent browser source, no plugins needed
 - **Runs on bad computers** — lightweight single-process server, only the active model's assets are loaded
-- **Standalone EXE** — build a portable release with no runtime dependencies
-- **Localhost only** — nothing leaves your machine
+- **Localhost only** — HTTP binds 127.0.0.1; nothing leaves your machine
 
 ---
 
 ## Quick Start
 
-### From Source
+### Linux (supported)
 
 ```bash
-# Clone the repo
-git clone https://github.com/angelssword/as-adventurer.git
-cd as-adventurer
-
-# Install dependencies
-npm install
-
-# Start the server
-npm start
+git clone https://github.com/Jhackler/Ai-png-tuber-overlay.git
+cd Ai-png-tuber-overlay
+chmod +x launch.sh
+./launch.sh            # install Node + deps if missing, then start
 ```
 
 Then open:
@@ -69,7 +69,7 @@ Then open:
 
 ### Linux launcher
 
-`launch.sh` is a portable, distro-agnostic launcher for Debian/Ubuntu, Fedora, and Arch (and most other glibc distros). Keep it in the repo root.
+`launch.sh` is a portable TUI launcher for Debian/Ubuntu, Fedora, and Arch (and most other glibc distros). Keep it in the repo root. Double-click from a file manager opens a terminal; close that window (or Ctrl+C) and the server dies with it.
 
 ```bash
 chmod +x launch.sh
@@ -81,12 +81,11 @@ chmod +x launch.sh
 
 It uses a system Node.js v18+ if you already have one. Otherwise it downloads an official portable Node runtime into `./runtime/` (no root required). `npm install` is skipped when dependencies are already present.
 
-### From Release (no Node.js needed)
+`npm start` still works if Node is already installed.
 
-1. Download the latest release ZIP
-2. Extract anywhere
-3. Double-click `Start AS Adventurer.bat`
-4. Open [http://localhost:3000](http://localhost:3000) in your browser
+### Windows leftovers
+
+Upstream `Start AS Adventurer.bat` / `build-release.js` EXE packaging may still be in the tree. This fork does not target Windows.
 
 ---
 
@@ -154,6 +153,14 @@ Emotes support **variants** — `intro.webm`, `intro2.webm`, `intro3.webm` play 
 1. Open iFacialMocap on your iPhone
 2. In the Control Panel, enter your iPhone's IP and click **Connect iFacial**
 
+### Webcam (MediaPipe)
+
+1. Open the Control Panel webcam tab
+2. **Fast** = 640×480 (default, cheaper). **Quality** = 1280×720
+3. Start the camera; keep the Control Panel tab open while streaming
+
+Saved in `localStorage` as `webcamQuality`. Implemented in `public/webcam-quality.js` (does not rewrite `control.js`).
+
 ### Microphone
 1. Select your mic from the dropdown in the Control Panel
 2. Click **Enable Microphone**
@@ -185,22 +192,16 @@ Emotes support **variants** — `intro.webm`, `intro2.webm`, `intro3.webm` play 
 
 ## Building a Release
 
-To create a standalone EXE distribution (no Node.js required for end users):
-
-```bash
-node build-release.js
-```
-
-This creates `release/ASAdventurer/` with the EXE, launcher, README, and a bundled demo character — plus a `release/ASAdventurer.zip` ready to distribute.
+`node build-release.js` is the upstream Windows EXE packager. Not maintained in this fork.
 
 ---
 
 ## Tech Stack
 
 - **Server:** Node.js, Express, WebSocket (`ws`)
-- **Tracking:** UDP sockets (VTube Studio / iFacialMocap protocol parsing)
+- **Tracking:** UDP (VTube Studio / iFacialMocap) + webcam blendshapes from the control panel
 - **Frontend:** Vanilla HTML/CSS/JS — no frameworks, no build step
-- **Packaging:** `pkg` for standalone EXE builds
+- **Linux:** `launch.sh` (TUI + optional portable Node)
 
 ---
 
@@ -210,8 +211,8 @@ MIT — free for personal and commercial use. See [LICENSE](LICENSE) for details
 
 ---
 
-## Contributing
+## Credits
 
-This project is open source because we believe everyone should be able to create, regardless of budget. If you want to contribute — bug fixes, features, documentation — PRs are welcome.
+Upstream: Angel's Sword Studios.
 
-If you find this useful, consider crediting **Angel's Sword Studios** in your stream setup. 💛
+This hard fork: Linux launcher, webcam Fast/Quality (720p), personal-use changes. Windows is not a target.
