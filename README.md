@@ -81,7 +81,7 @@ chmod +x launch.sh
 
 It uses a system Node.js v18+ if you already have one. Otherwise it downloads an official portable Node runtime into `./runtime/` (no root required). `npm install` is skipped when dependencies are already present.
 
-`npm start` still works if Node is already installed.
+`npm start` still works if Node is already installed. `npm test` checks model-path safety and expression scoring. It does not start the overlay.
 
 ### Windows leftovers
 

@@ -6,6 +6,7 @@
   "license": "MIT",
   "scripts": {
     "start": "node server.js",
+    "test": "node --test",
     "placeholders": "node generate-placeholders.js"
   },
   "dependencies": {

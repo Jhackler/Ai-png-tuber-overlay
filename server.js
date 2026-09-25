@@ -4,6 +4,13 @@ const { WebSocketServer } = require('ws');
 const dgram = require('dgram');
 const path = require('path');
 const fs = require('fs');
+const { resolveModelDir } = require('./lib/model-path');
+const {
+  detectExpression: scoreExpression,
+  parseIFacialMocap,
+  parseVTubeStudio,
+  DEFAULT_THRESHOLDS,
+} = require('./lib/expression');
 
 // When compiled with pkg, __dirname points to a virtual snapshot filesystem.
 // Use the exe's real directory for static files (public/, assets/).
@@ -49,12 +56,7 @@ let activeEmote = null;      // Currently active emote
 
 // Resolve model directory path from model name (with path traversal protection)
 function getModelDir(modelName) {
-  const name = modelName || activeModel;
-  if (name === 'Default') return ASSETS_DIR;
-  const resolved = path.resolve(ASSETS_DIR, path.basename(name));
-  // Ensure resolved path is inside ASSETS_DIR
-  if (!resolved.startsWith(ASSETS_DIR)) return ASSETS_DIR;
-  return resolved;
+  return resolveModelDir(ASSETS_DIR, modelName || activeModel);
 }
 
 // Scan a directory for state assets
@@ -374,19 +376,13 @@ app.get('/api/models', (req, res) => {
 // ── API: List assets for a model ────────────────────
 app.get('/api/assets', (req, res) => {
   const modelName = req.query.model || activeModel;
-
-  let assets;
-  if (modelName === 'Default') {
-    assets = scanModelAssets(ASSETS_DIR, '/assets/');
-  } else {
-    const modelDir = path.join(ASSETS_DIR, modelName);
-    if (fs.existsSync(modelDir)) {
-      assets = scanModelAssets(modelDir, `/assets/${encodeURIComponent(modelName)}/`);
-    } else {
-      assets = {};
-    }
+  const modelDir = getModelDir(modelName);
+  const safeName = path.basename(String(modelName || 'Default'));
+  if (modelDir === ASSETS_DIR || safeName === 'Default' || safeName === '.' || safeName === '..') {
+    return res.json(scanModelAssets(ASSETS_DIR, '/assets/'));
   }
-  res.json(assets);
+  if (!fs.existsSync(modelDir)) return res.json({});
+  res.json(scanModelAssets(modelDir, `/assets/${encodeURIComponent(safeName)}/`));
 });
 
 // ── API: Select active model ────────────────────────
@@ -554,158 +550,10 @@ function broadcastAll(data) {
 
 // ── Expression Detection ────────────────────────────
 // Thresholds (can be adjusted via control panel)
-let thresholds = {
-  smile: 20,
-  frown: 25,
-  surprised: 25,
-  eyesClosed: 55
-};
+let thresholds = { ...DEFAULT_THRESHOLDS };
 
 function detectExpression(blendShapes) {
-  // Helper that tries multiple key name conventions
-  const get = (...names) => {
-    for (const name of names) {
-      if (blendShapes[name] !== undefined) return blendShapes[name];
-    }
-    return 0;
-  };
-
-  // ── Raw blend shape values ───────────────────────
-  // Eyes
-  const eyeBlinkL   = get('EyeBlinkLeft',    'eyeBlink_L',    'eyeBlinkLeft');
-  const eyeBlinkR   = get('EyeBlinkRight',   'eyeBlink_R',   'eyeBlinkRight');
-  const eyeSquintL  = get('EyeSquintLeft',   'eyeSquint_L',  'eyeSquintLeft');
-  const eyeSquintR  = get('EyeSquintRight',  'eyeSquint_R',  'eyeSquintRight');
-  const eyeWideL    = get('EyeWideLeft',     'eyeWide_L',    'eyeWideLeft');
-  const eyeWideR    = get('EyeWideRight',    'eyeWide_R',    'eyeWideRight');
-
-  // Brows
-  const browDownL   = get('BrowDownLeft',    'browDown_L',    'browDownLeft');
-  const browDownR   = get('BrowDownRight',   'browDown_R',   'browDownRight');
-  const browInnerUp = get('BrowInnerUp',     'browInnerUp',  'browInner_Up');
-  const browOuterL  = get('BrowOuterUpLeft', 'browOuterUp_L','browOuterUpLeft');
-  const browOuterR  = get('BrowOuterUpRight','browOuterUp_R','browOuterUpRight');
-
-  // Cheeks (strongest genuine smile indicator)
-  const cheekSquintL = get('CheekSquintLeft',  'cheekSquint_L', 'cheekSquintLeft');
-  const cheekSquintR = get('CheekSquintRight', 'cheekSquint_R', 'cheekSquintRight');
-
-  // Mouth
-  const mouthSmileL = get('MouthSmileLeft',  'mouthSmile_L', 'mouthSmileLeft');
-  const mouthSmileR = get('MouthSmileRight', 'mouthSmile_R', 'mouthSmileRight');
-  const mouthFrownL = get('MouthFrownLeft',  'mouthFrown_L', 'mouthFrownLeft');
-  const mouthFrownR = get('MouthFrownRight', 'mouthFrown_R', 'mouthFrownRight');
-  const jawOpen     = get('JawOpen',         'jawOpen',      'jaw_Open');
-  const mouthFunnel = get('MouthFunnel',     'mouthFunnel',  'mouth_Funnel');
-
-  // ── Composite scores ─────────────────────────────
-  const eyesClosed = (eyeBlinkL + eyeBlinkR) / 2;
-
-  // Happy: cheek squint (Duchenne marker) + eye squint + mouth smile
-  const cheekSquint = (cheekSquintL + cheekSquintR) / 2;
-  const eyeSquint   = (eyeSquintL + eyeSquintR) / 2;
-  const mouthSmile  = (mouthSmileL + mouthSmileR) / 2;
-  const smile = (cheekSquint * 0.45) + (eyeSquint * 0.35) + (mouthSmile * 0.20);
-
-  // Sad: brow furrow + inner brow raise + mouth frown
-  const browDown    = (browDownL + browDownR) / 2;
-  const mouthFrown  = (mouthFrownL + mouthFrownR) / 2;
-  const frown = (browDown * 0.40) + (browInnerUp * 0.30) + (mouthFrown * 0.30);
-
-  // Surprised: eyes wide open + jaw open (O-mouth) + raised brows
-  // These are the OPPOSITE of happy (wide eyes vs squint, open mouth vs smile)
-  const eyeWide   = (eyeWideL + eyeWideR) / 2;
-  const browUp    = ((browOuterL + browOuterR) / 2 + browInnerUp) / 2;
-  const surprised = (eyeWide * 0.35) + (jawOpen * 0.35) + (browUp * 0.15) + (mouthFunnel * 0.15);
-
-  // ── Expression priority: eyes_closed > surprised > happy > sad > neutral
-  if (eyesClosed > thresholds.eyesClosed) {
-    return { expression: 'eyes_closed', confidence: eyesClosed, smile, frown, surprised, eyesClosed };
-  }
-  if (surprised > thresholds.surprised && surprised > smile && surprised > frown) {
-    return { expression: 'surprised', confidence: surprised, smile, frown, surprised, eyesClosed };
-  }
-  if (smile > thresholds.smile && smile > frown) {
-    return { expression: 'happy', confidence: smile, smile, frown, surprised, eyesClosed };
-  }
-  if (frown > thresholds.frown && frown > smile) {
-    return { expression: 'sad', confidence: frown, smile, frown, surprised, eyesClosed };
-  }
-  return { expression: 'neutral', confidence: 100, smile, frown, surprised, eyesClosed };
-}
-
-// ── iFacialMocap Parser ─────────────────────────────
-function parseIFacialMocap(data) {
-  const str = data.toString('utf-8').trim();
-  const blendShapes = {};
-
-  // iFacialMocap format: "blendShapeName-value|blendShapeName-value|...=head|rx#val|ry#val..."
-  // Split on the = sign first to separate blend shapes from head rotation
-  const mainPart = str.split('=')[0];
-  if (!mainPart) return blendShapes;
-
-  const parts = mainPart.split('|');
-  for (const part of parts) {
-    if (!part || part.includes('#')) continue;
-    const dashIdx = part.lastIndexOf('-');
-    if (dashIdx > 0) {
-      const name = part.substring(0, dashIdx);
-      const value = parseFloat(part.substring(dashIdx + 1));
-      if (!isNaN(value) && name.length > 0) {
-        blendShapes[name] = value;  // iFacialMocap values are already 0-100
-      }
-    }
-  }
-  return blendShapes;
-}
-
-// ── VTube Studio Parser ─────────────────────────────
-function parseVTubeStudio(data) {
-  try {
-    const json = JSON.parse(data.toString('utf-8'));
-
-    // VTS uses PascalCase: "BlendShapes", "FaceFound", etc.
-    // Check for face found (case-insensitive)
-    const faceFound = json.FaceFound ?? json.faceFound;
-    if (faceFound === false) return null; // No face detected
-
-    // Find blend shapes array/object (try both cases)
-    const rawBS = json.BlendShapes || json.blendShapes;
-
-    if (rawBS && typeof rawBS === 'object') {
-      const bs = {};
-
-      if (Array.isArray(rawBS)) {
-        // VTS sends array of {k: "name", v: value} objects
-        for (const item of rawBS) {
-          const key = item.k ?? item.key ?? item.name ?? item.K;
-          // Use ?? for val since 0 is a valid value but || would skip it
-          const val = item.v ?? item.value ?? item.V ?? 0;
-          if (key !== undefined && key !== null) {
-            // VTS values are 0.0-1.0 floats, convert to 0-100 scale
-            const numVal = typeof val === 'number' ? val : parseFloat(val) || 0;
-            bs[key] = numVal <= 1.0 ? numVal * 100 : numVal;
-          }
-        }
-      } else {
-        // Object format: { "eyeBlink_L": 0.5, ... }
-        for (const [key, val] of Object.entries(rawBS)) {
-          bs[key] = typeof val === 'number' && val <= 1.0 ? val * 100 : parseFloat(val) || 0;
-        }
-      }
-
-      if (Object.keys(bs).length > 0) return bs;
-    }
-
-    // Fallback: if it has FaceFound but no BlendShapes we recognized
-    if (faceFound !== undefined) {
-      console.log('[vts-parser] FaceFound but no BlendShapes parsed. Keys:', Object.keys(json).join(', '));
-    }
-  } catch (e) {
-    // Not JSON — fall back to iFacialMocap format
-    return parseIFacialMocap(data);
-  }
-  return null;
+  return scoreExpression(blendShapes, thresholds);
 }
 
 // ── Rate limiter + expression hysteresis ────────────
