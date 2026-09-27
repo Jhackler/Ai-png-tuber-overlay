@@ -34,6 +34,7 @@ html, body {
   align-items: flex-end;
   justify-content: center;
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
   will-change: opacity, filter, transform;
   /* No opacity transition — on transparent backgrounds (OBS), crossfades
@@ -42,6 +43,7 @@ html, body {
 
 .asset-layer.active {
   opacity: 1;
+  visibility: visible;
 }
 
 /* Combined transition: blur + pop on state swap */
@@ -59,6 +61,7 @@ html, body {
    WARNING: On transparent OBS backgrounds, both layers are visible
    during the crossfade → ghosting/character doubling. */
 #overlay-container.crossfade-mode .asset-layer {
+  visibility: visible;
   transition: opacity var(--swap-duration, 200ms) ease-in-out;
 }
 #overlay-container.crossfade-mode .asset-layer.transition-swap {
