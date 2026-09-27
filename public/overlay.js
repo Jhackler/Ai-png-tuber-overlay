@@ -83,10 +83,10 @@
           video.loop = true;
           video.muted = true;
           video.playsInline = true;
-          video.autoplay = false;
+          video.autoplay = true;
           video.preload = 'auto';
-          // Do not play() here. A hidden playing WebM still composites in OBS,
-          // and the speaking clip is later in the stack so it wins.
+          // Start playing but hidden
+          video.play().catch(() => {});
           layer.appendChild(video);
         } else {
           const img = document.createElement('img');
@@ -677,80 +677,6 @@
   // via WebSocket as {type:'speaking', speaking:bool}.
   // OBS browser sources can't access getUserMedia.
 
-  // One hide per swap. A callback that loses the race re-arms for the state
-  // we landed on instead of leaving the previous clip on top.
-  const layerSwap = globalThis.LayerSwap.createLayerSwap();
-  const shouldForceSettle = globalThis.LayerSwap.shouldForceSettle;
-  let stateShownAt = Date.now();
-
-  function otherLayerActive(targetState) {
-    return Object.entries(layers).some(([key, layer]) =>
-      key !== targetState && layer && layer.classList.contains('active'));
-  }
-
-  function strayPlaying(targetState) {
-    return Object.entries(layers).some(([key, layer]) => {
-      if (!layer || key === targetState) return false;
-      const video = layer.querySelector('video');
-      return !!(video && !video.paused);
-    });
-  }
-
-  function commitShow(targetState) {
-    const current = layers[targetState];
-    if (current) {
-      current.classList.add('active');
-      current.style.zIndex = '3';
-      const video = current.querySelector('video');
-      if (video) video.style.display = '';
-    }
-    for (const [key, layer] of Object.entries(layers)) {
-      if (!layer || key === targetState) continue;
-      layer.classList.remove('active');
-      layer.style.zIndex = '1';
-      const video = layer.querySelector('video');
-      if (!video) continue;
-      video.style.display = 'none';
-      if (!video.paused) video.pause();
-    }
-  }
-
-  function armHide(targetState, video) {
-    const swapId = layerSwap.arm();
-    if (!swapId) return;
-    const crossDelay = (CONFIG.crossfadeMode && CONFIG.swapDuration > 0) ? CONFIG.swapDuration : 0;
-
-    const run = () => {
-      if (layerSwap.shouldApply(swapId, currentStateKey, targetState)) {
-        commitShow(targetState);
-        return;
-      }
-      if (!layerSwap.shouldRetry(swapId) || !currentStateKey) return;
-      if (!otherLayerActive(currentStateKey) && !strayPlaying(currentStateKey)) return;
-      const landed = layers[currentStateKey];
-      armHide(currentStateKey, landed ? landed.querySelector('video') : null);
-    };
-
-    const afterReady = () => {
-      if (crossDelay) setTimeout(run, crossDelay);
-      else run();
-    };
-
-    if (!video) {
-      afterReady();
-      return;
-    }
-    // readyState alone is not enough — a paused video can still report
-    // readyState >= 3 while showing a stale freeze frame.
-    const isLive = !video.paused && video.readyState >= 3;
-    if (isLive) {
-      afterReady();
-      return;
-    }
-    video.addEventListener('playing', afterReady, { once: true });
-    setTimeout(run, crossDelay + 150);
-  }
-
   // ── Display Update ──────────────────────────────
   function updateDisplay() {
     // Emotes have ABSOLUTE priority — override everything
@@ -762,8 +688,6 @@
       if (emoteLayer.classList.contains('active')) {
         for (const [key, layer] of Object.entries(layers)) {
           layer.classList.remove('active');
-          const video = layer && layer.querySelector('video');
-          if (video && !video.paused) video.pause();
         }
       }
       if (debug) {
@@ -793,47 +717,87 @@
       newStateKey = `${effectiveExpression}_${isSpeaking ? 'speaking' : 'idle'}`;
     }
 
-    if (newStateKey === currentStateKey && layers[newStateKey]?.classList.contains('active')) {
-      const layer = layers[newStateKey];
-      const video = layer ? layer.querySelector('video') : null;
-      if (shouldForceSettle({
-        otherActive: otherLayerActive(newStateKey),
-        strayPlaying: strayPlaying(newStateKey),
-        targetReady: !video || video.readyState >= 2,
-        waitedMs: Date.now() - stateShownAt,
-      })) {
-        if (video) {
-          video.style.display = '';
-          if (video.paused) video.play().catch(() => {});
-        }
-        commitShow(newStateKey);
-      }
-      return;
-    }
+    if (newStateKey === currentStateKey) return;
 
     const prevKey = currentStateKey;
     currentStateKey = newStateKey;
-    stateShownAt = Date.now();
-    layerSwap.beginSwap();
 
-    // Show the new layer immediately, but keep the old one up until the new
-    // clip has a frame (or 150ms). That wait is what prevents a blank flash.
+    // Instant swap with frame-ready gate:
+    // Show new layer immediately, but keep old visible until
+    // new layer's video has rendered a frame (prevents flash-to-nothing).
     const newLayer = layers[newStateKey];
     if (newLayer) {
       newLayer.classList.add('active');
 
       if (!CONFIG.crossfadeMode) {
+        // Blur-pop mode: apply transition animation
         newLayer.classList.remove('transition-swap');
-        void newLayer.offsetWidth;
+        void newLayer.offsetWidth; // Force reflow to restart animation
         newLayer.classList.add('transition-swap');
       }
 
       const video = newLayer.querySelector('video');
       if (video) {
-        if (video.readyState >= 2) video.style.display = '';
         video.play().catch(() => {});
+
+        // Wait for the video to actually render a FRESH frame before hiding
+        // old layers. readyState alone is NOT enough — a browser-paused video
+        // still reports readyState >= 3 while showing a stale freeze frame.
+        const targetState = newStateKey; // Capture for closure
+        const hideOld = () => {
+          // Guard: if state changed since we started, don't touch layers
+          if (currentStateKey !== targetState) return;
+          for (const [key, layer] of Object.entries(layers)) {
+            if (key !== targetState) {
+              layer.classList.remove('active');
+              // Pause hidden videos to free CPU (especially for lower-end PCs).
+              // They'll be play()'d again when their layer becomes active.
+              const v = layer.querySelector('video');
+              if (v && !v.paused) v.pause();
+            }
+          }
+        };
+
+        // Video is actively playing AND has data → safe to swap immediately
+        const isLive = !video.paused && video.readyState >= 3;
+
+        if (CONFIG.crossfadeMode && CONFIG.swapDuration > 0) {
+          if (isLive) {
+            setTimeout(hideOld, CONFIG.swapDuration);
+          } else {
+            video.addEventListener('playing', () => {
+              setTimeout(hideOld, CONFIG.swapDuration);
+            }, { once: true });
+            setTimeout(hideOld, CONFIG.swapDuration + 150);
+          }
+        } else {
+          if (isLive) {
+            hideOld();
+          } else {
+            // Wait for actual playback — 'playing' fires when the video
+            // is genuinely advancing frames, not just buffered.
+            video.addEventListener('playing', hideOld, { once: true });
+            setTimeout(hideOld, 150); // Fallback
+          }
+        }
+      } else {
+        // Image asset
+        if (CONFIG.crossfadeMode && CONFIG.swapDuration > 0) {
+          // Delay hiding old layers for crossfade
+          const targetState = newStateKey;
+          setTimeout(() => {
+            if (currentStateKey !== targetState) return;
+            for (const [key, layer] of Object.entries(layers)) {
+              if (key !== targetState) layer.classList.remove('active');
+            }
+          }, CONFIG.swapDuration);
+        } else {
+          // Instant swap
+          for (const [key, layer] of Object.entries(layers)) {
+            if (key !== newStateKey) layer.classList.remove('active');
+          }
+        }
       }
-      armHide(newStateKey, video);
     }
 
     // Debug
