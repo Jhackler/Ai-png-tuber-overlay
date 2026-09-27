@@ -823,6 +823,7 @@
   let micTypingConfirmed = false;  // True once 2 hits within 500ms
   let micAboveThresholdSince = null;  // For noise gate attack timing
   let micLastVoiceFrame = null;       // Last time a voice-like frame was detected
+  let lastVoicePush = 0;               // Last time the talking flag was sent
   let micInterval = null;          // setInterval handle for mic processing (fallback)
   let micWorker = null;            // Web Worker for background-safe mic timing
   let micDataArray = null;         // Pre-allocated Uint8Array for FFT data
@@ -1096,9 +1097,14 @@
     document.getElementById('mic-voice-label').textContent = micIsSpeaking
       ? 'Speaking' : micIsTyping ? 'Typing' : 'Idle';
 
-    // Send state change to overlay via WebSocket
-    if (wasSpeaking !== micIsSpeaking || wasTyping !== micIsTyping) {
+    // Send state change to overlay via WebSocket.
+    // Also repeat the current flag twice a second. A single missed
+    // "stopped talking" used to stick until the browser source was refreshed,
+    // while face updates kept arriving and picked the talking clip.
+    const voiceChanged = wasSpeaking !== micIsSpeaking || wasTyping !== micIsTyping;
+    if (voiceChanged || Date.now() - lastVoicePush >= 500) {
       if (ws && ws.readyState === 1) {
+        lastVoicePush = Date.now();
         ws.send(JSON.stringify({
           type: 'speaking',
           speaking: micIsSpeaking,

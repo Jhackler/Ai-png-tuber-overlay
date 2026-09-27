@@ -5,6 +5,7 @@ const dgram = require('dgram');
 const path = require('path');
 const fs = require('fs');
 const { resolveModelDir } = require('./lib/model-path');
+const { isUnthrottledClientMessage, noteVoice } = require('./lib/voice-sync');
 const {
   detectExpression: scoreExpression,
   parseIFacialMocap,
@@ -460,6 +461,7 @@ app.post('/api/emote/sub', (req, res) => {
 
 // ── WebSocket connections ───────────────────────────
 const clients = new Set();
+let voiceState = { speaking: false, typing: false };
 
 wss.on('connection', (ws, req) => {
   // Connection limit
@@ -486,17 +488,25 @@ wss.on('connection', (ws, req) => {
   ws._msgResetTime = Date.now();
   clients.add(ws);
   console.log(`[ws] ${clientType} connected (${clients.size} total)`);
+  if (clientType === 'overlay') {
+    ws.send(JSON.stringify({ type: 'speaking', ...voiceState }));
+  }
 
   ws.on('message', (data) => {
     try {
-      // Rate limit: max 120 messages/second per client
-      const now = Date.now();
-      if (now - ws._msgResetTime > 1000) { ws._msgCount = 0; ws._msgResetTime = now; }
-      if (++ws._msgCount > 120) return;
-
       const msg = JSON.parse(data);
+      // Face tracking can exceed this. Speaking cannot be in that bucket:
+      // it is sent once per change, and a dropped "stopped talking" sticks
+      // until the overlay page is reloaded.
+      if (!isUnthrottledClientMessage(msg.type)) {
+        const now = Date.now();
+        if (now - ws._msgResetTime > 1000) { ws._msgCount = 0; ws._msgResetTime = now; }
+        if (++ws._msgCount > 120) return;
+      }
+
       // Control panel sending data → forward to overlays
       if (ws.clientType === 'control') {
+        if (msg.type === 'speaking') voiceState = noteVoice(voiceState, msg);
         if (msg.type === 'expression' || msg.type === 'speaking' || msg.type === 'config' || msg.type === 'emote' || msg.type === 'state_override') {
           broadcast(msg, 'overlay');
         }
