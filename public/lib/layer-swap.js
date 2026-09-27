@@ -30,7 +30,14 @@ function createLayerSwap() {
   };
 }
 
-const api = { createLayerSwap };
+// Same-key updates must still finish a hide once the new clip has a frame,
+// or once the blank-flash wait is over. Otherwise a playing WebM stays on top.
+function shouldForceSettle(state) {
+  if (!state.otherActive && !state.strayPlaying) return false;
+  return state.targetReady || state.waitedMs >= 150;
+}
+
+const api = { createLayerSwap, shouldForceSettle };
 if (typeof module === 'object' && module.exports) {
   module.exports = api;
 } else {

@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createLayerSwap } = require('../public/lib/layer-swap');
+const { createLayerSwap, shouldForceSettle } = require('../public/lib/layer-swap');
 
 test('a second hide during the frame wait is ignored', () => {
   const gate = createLayerSwap();
@@ -37,6 +37,21 @@ test('a cancelled hide retries once when the landed state never armed one', () =
   assert.equal(gate.shouldRetry(idle), true);
   assert.ok(gate.arm());
   assert.equal(gate.shouldRetry(idle), false);
+});
+
+test('a same-key update settles once the new clip is ready or the wait is over', () => {
+  assert.equal(shouldForceSettle({
+    otherActive: true, strayPlaying: true, targetReady: false, waitedMs: 40,
+  }), false);
+  assert.equal(shouldForceSettle({
+    otherActive: true, strayPlaying: false, targetReady: true, waitedMs: 10,
+  }), true);
+  assert.equal(shouldForceSettle({
+    otherActive: false, strayPlaying: true, targetReady: false, waitedMs: 150,
+  }), true);
+  assert.equal(shouldForceSettle({
+    otherActive: false, strayPlaying: false, targetReady: true, waitedMs: 500,
+  }), false);
 });
 
 test('a cancelled hide does not cut short a hide the landed state already armed', () => {

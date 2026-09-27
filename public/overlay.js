@@ -83,10 +83,10 @@
           video.loop = true;
           video.muted = true;
           video.playsInline = true;
-          video.autoplay = true;
+          video.autoplay = false;
           video.preload = 'auto';
-          // Start playing but hidden
-          video.play().catch(() => {});
+          // Do not play() here. A hidden playing WebM still composites in OBS,
+          // and the speaking clip is later in the stack so it wins.
           layer.appendChild(video);
         } else {
           const img = document.createElement('img');
@@ -680,18 +680,38 @@
   // One hide per swap. A callback that loses the race re-arms for the state
   // we landed on instead of leaving the previous clip on top.
   const layerSwap = globalThis.LayerSwap.createLayerSwap();
+  const shouldForceSettle = globalThis.LayerSwap.shouldForceSettle;
+  let stateShownAt = Date.now();
 
   function otherLayerActive(targetState) {
     return Object.entries(layers).some(([key, layer]) =>
       key !== targetState && layer && layer.classList.contains('active'));
   }
 
-  function applyHide(targetState) {
+  function strayPlaying(targetState) {
+    return Object.entries(layers).some(([key, layer]) => {
+      if (!layer || key === targetState) return false;
+      const video = layer.querySelector('video');
+      return !!(video && !video.paused);
+    });
+  }
+
+  function commitShow(targetState) {
+    const current = layers[targetState];
+    if (current) {
+      current.classList.add('active');
+      current.style.zIndex = '3';
+      const video = current.querySelector('video');
+      if (video) video.style.display = '';
+    }
     for (const [key, layer] of Object.entries(layers)) {
       if (!layer || key === targetState) continue;
       layer.classList.remove('active');
+      layer.style.zIndex = '1';
       const video = layer.querySelector('video');
-      if (video && !video.paused) video.pause();
+      if (!video) continue;
+      video.style.display = 'none';
+      if (!video.paused) video.pause();
     }
   }
 
@@ -702,10 +722,11 @@
 
     const run = () => {
       if (layerSwap.shouldApply(swapId, currentStateKey, targetState)) {
-        applyHide(targetState);
+        commitShow(targetState);
         return;
       }
-      if (!layerSwap.shouldRetry(swapId) || !currentStateKey || !otherLayerActive(currentStateKey)) return;
+      if (!layerSwap.shouldRetry(swapId) || !currentStateKey) return;
+      if (!otherLayerActive(currentStateKey) && !strayPlaying(currentStateKey)) return;
       const landed = layers[currentStateKey];
       armHide(currentStateKey, landed ? landed.querySelector('video') : null);
     };
@@ -741,6 +762,8 @@
       if (emoteLayer.classList.contains('active')) {
         for (const [key, layer] of Object.entries(layers)) {
           layer.classList.remove('active');
+          const video = layer && layer.querySelector('video');
+          if (video && !video.paused) video.pause();
         }
       }
       if (debug) {
@@ -770,20 +793,27 @@
       newStateKey = `${effectiveExpression}_${isSpeaking ? 'speaking' : 'idle'}`;
     }
 
-    if (newStateKey === currentStateKey) {
-      // Already on this state, but a cancelled hide can leave the previous
-      // clip active on top. Finish that hide. Do not restart the swap animation.
-      if (otherLayerActive(newStateKey)) {
-        const layer = layers[newStateKey];
-        const video = layer ? layer.querySelector('video') : null;
-        if (video && video.paused) video.play().catch(() => {});
-        armHide(newStateKey, video);
+    if (newStateKey === currentStateKey && layers[newStateKey]?.classList.contains('active')) {
+      const layer = layers[newStateKey];
+      const video = layer ? layer.querySelector('video') : null;
+      if (shouldForceSettle({
+        otherActive: otherLayerActive(newStateKey),
+        strayPlaying: strayPlaying(newStateKey),
+        targetReady: !video || video.readyState >= 2,
+        waitedMs: Date.now() - stateShownAt,
+      })) {
+        if (video) {
+          video.style.display = '';
+          if (video.paused) video.play().catch(() => {});
+        }
+        commitShow(newStateKey);
       }
       return;
     }
 
     const prevKey = currentStateKey;
     currentStateKey = newStateKey;
+    stateShownAt = Date.now();
     layerSwap.beginSwap();
 
     // Show the new layer immediately, but keep the old one up until the new
@@ -799,7 +829,10 @@
       }
 
       const video = newLayer.querySelector('video');
-      if (video) video.play().catch(() => {});
+      if (video) {
+        if (video.readyState >= 2) video.style.display = '';
+        video.play().catch(() => {});
+      }
       armHide(newStateKey, video);
     }
 
