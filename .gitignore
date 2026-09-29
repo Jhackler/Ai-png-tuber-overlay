@@ -3,6 +3,9 @@ dist/
 release/
 runtime/
 
+# Local HTTP port choice. Copy port.conf.example to port.conf.
+port.conf
+
 # Assets (users bring their own)
 public/assets/*.gif
 public/assets/*.webm

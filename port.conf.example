@@ -1,0 +1,12 @@
+# HTTP port for the control panel and the OBS overlay.
+# Copy this file to port.conf to use it. port.conf is not committed,
+# so a git pull will not put your port back.
+#
+# mode=auto    start at 3000 and try the next port if it is busy (3000-3009).
+#              The number below is ignored. PORT=8080 still moves the start.
+# mode=manual  bind the number below and exit if that port is taken.
+#              Does not walk. This is the one that keeps an OBS URL stable.
+#
+# VTube Studio and iFacialMocap UDP ports are not this file.
+mode=auto
+3000

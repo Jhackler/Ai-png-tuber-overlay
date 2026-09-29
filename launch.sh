@@ -9,8 +9,6 @@
 set -euo pipefail
 
 APP_NAME="AS Adventurer"
-APP_HINT="Control panel: http://localhost:3000"
-APP_HINT2="OBS overlay:    http://localhost:3000/overlay.html"
 NODE_MIN_MAJOR=18
 NODE_PORTABLE_VERSION="20.18.0"
 
@@ -335,6 +333,32 @@ do_install_update() {
 
 # Run the server in the FOREGROUND of this terminal.
 # Close the window or Ctrl+C → the process group dies with it.
+# Printed URL. Manual mode uses the port in port.conf. Auto still says 3000.
+overlay_http_port() {
+  local conf="$ROOT/port.conf"
+  local mode="auto"
+  local port="3000"
+  local line
+  [[ -f "$conf" ]] || { printf '%s' "$port"; return; }
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    if [[ "$line" == mode=* ]]; then
+      mode="${line#mode=}"
+      mode="${mode// /}"
+    elif [[ "$line" =~ ^[0-9]+$ ]]; then
+      port="$line"
+    fi
+  done < "$conf"
+  if [[ "$mode" == "manual" ]]; then
+    printf '%s' "$port"
+  else
+    printf '%s' "3000"
+  fi
+}
+
 do_launch() {
   if ! app_ready; then
     warn "No usable build yet. Run Install / Update first."
@@ -346,8 +370,10 @@ do_launch() {
   log "============================================"
   log "$APP_NAME — running in this window"
   log "============================================"
-  log "$APP_HINT"
-  [[ -n "${APP_HINT2:-}" ]] && log "$APP_HINT2"
+  local http_port
+  http_port="$(overlay_http_port)"
+  log "Control panel: http://localhost:${http_port}"
+  log "OBS overlay:    http://localhost:${http_port}/overlay.html"
   log "Close this terminal or press Ctrl+C to stop."
   printf '\n'
 

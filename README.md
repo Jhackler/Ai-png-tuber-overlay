@@ -81,7 +81,9 @@ chmod +x launch.sh
 
 It uses a system Node.js v18+ if you already have one. Otherwise it downloads an official portable Node runtime into `./runtime/` (no root required). `npm install` is skipped when dependencies are already present.
 
-`npm start` still works if Node is already installed. `npm test` checks model-path safety, expression scoring, and the speaking-flag rules. It does not start the overlay.
+`npm start` still works if Node is already installed. `npm test` checks model-path safety, expression scoring, the speaking-flag rules, and port.conf. It does not start the overlay.
+
+To pin the OBS URL, copy `port.conf.example` to `port.conf` and set `mode=manual` plus the port on the next line. `port.conf` is not committed. `mode=auto` is the current 3000–3009 walk. Manual binds that one port and exits if it is taken.
 
 ### Windows leftovers
 

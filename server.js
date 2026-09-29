@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const { resolveModelDir } = require('./lib/model-path');
 const { isUnthrottledClientMessage, noteVoice } = require('./lib/voice-sync');
+const { resolveListenPlan } = require('./lib/port-config');
 const {
   detectExpression: scoreExpression,
   parseIFacialMocap,
@@ -834,10 +835,10 @@ app.post('/api/thresholds', (req, res) => {
 });
 
 // ── Start (auto-find available port) ────────────────
-function tryListen(port, attempt) {
-  if (attempt >= MAX_PORT_ATTEMPTS) {
-    console.error(`\n  ✗ Could not find an available port (tried ${PREFERRED_PORT}-${PREFERRED_PORT + MAX_PORT_ATTEMPTS - 1})`);
-    console.error('  Close the other process or set a custom port with: PORT=XXXX node server.js\n');
+function tryListen(port, attempt, hunt) {
+  if (hunt && attempt >= MAX_PORT_ATTEMPTS) {
+    console.error(`\n  ✗ Could not find an available port (tried ${port - attempt}-${port - attempt + MAX_PORT_ATTEMPTS - 1})`);
+    console.error('  Close the other process, or set mode=manual in port.conf\n');
     process.exit(1);
   }
 
@@ -849,8 +850,13 @@ function tryListen(port, attempt) {
   server.once('error', (err) => {
     wss.removeListener('error', wssErrorHandler);
     if (err.code === 'EADDRINUSE') {
+      if (!hunt) {
+        console.error(`\n  ✗ Port ${port} is in use.`);
+        console.error('  Close the other process, or set mode=auto in port.conf\n');
+        process.exit(1);
+      }
       console.log(`  Port ${port} in use, trying ${port + 1}...`);
-      server.close(() => tryListen(port + 1, attempt + 1));
+      server.close(() => tryListen(port + 1, attempt + 1, true));
     } else {
       throw err;
     }
@@ -873,7 +879,10 @@ function tryListen(port, attempt) {
     console.log(`    VTube Studio:   send=${VTS_SEND_PORT} recv=${VTS_RECV_PORT}`);
     console.log(`    iFacialMocap:   UDP port ${IFACIAL_PORT}`);
     console.log('');
-    if (PORT !== PREFERRED_PORT) {
+    if (!hunt) {
+      console.log(`    Port mode: manual (${PORT})`);
+      console.log('');
+    } else if (PORT !== PREFERRED_PORT) {
       console.log(`    ⚠  Port ${PREFERRED_PORT} was busy, using ${PORT} instead`);
       console.log('');
     }
@@ -882,9 +891,20 @@ function tryListen(port, attempt) {
   });
 }
 
-// Allow override via environment variable: PORT=8080 node server.js
-PORT = parseInt(process.env.PORT, 10) || PREFERRED_PORT;
-tryListen(PORT, 0);
+function loadListenPlan() {
+  const confPath = path.join(APP_DIR, 'port.conf');
+  if (!fs.existsSync(confPath)) return resolveListenPlan(null, process.env.PORT);
+  const plan = resolveListenPlan(fs.readFileSync(confPath, 'utf8'), process.env.PORT);
+  if (plan.error) {
+    console.error(`\n  ✗ port.conf: ${plan.error}`);
+    console.error('  See port.conf.example\n');
+    process.exit(1);
+  }
+  return plan;
+}
+
+const listenPlan = loadListenPlan();
+tryListen(listenPlan.port, 0, listenPlan.hunt);
 
 // ── Graceful Shutdown ───────────────────────────────
 process.on('SIGINT', () => {
